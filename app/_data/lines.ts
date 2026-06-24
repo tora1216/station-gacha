@@ -492,3 +492,11 @@ export const LINES_BY_OPERATOR: OperatorGroup[] = (() => {
   }
   return groups;
 })();
+
+export const LINE_BY_CODE: Record<string, Line> = Object.fromEntries(
+  LINES.map((line) => [line.code, line])
+);
+
+export function findStation(lineCode: string, stationCode: string): Station | undefined {
+  return LINE_BY_CODE[lineCode]?.stations.find((s) => s.code === stationCode);
+}

@@ -1,11 +1,15 @@
 "use client";
 
 import { useMemo, useRef, useState } from "react";
-import { pickRandomLine, pickRandomStation, type GachaResult } from "../_lib/gacha";
-import { LINES, type Line, type Station } from "../_data/lines";
+import { pickRandomLine, pickRandomStation } from "../_lib/gacha";
+import { LINE_BY_CODE, LINES, STATION_COUNT, findStation, type Line, type Station } from "../_data/lines";
 import { useExcludedLines } from "../_lib/lineSelection";
+import { addHistoryEntry, useHistory } from "../_lib/history";
+import { toggleVisited, useVisitedStations } from "../_lib/visited";
 import OperatorLogo from "./OperatorLogo";
 import StationSpots from "./StationSpots";
+
+const HISTORY_DISPLAY_LIMIT = 10;
 
 const LINE_SPIN_INTERVAL_MS = 60;
 const LINE_SPIN_DURATION_MS = 700;
@@ -18,10 +22,12 @@ export default function Gacha() {
   const [phase, setPhase] = useState<Phase>("idle");
   const [displayLine, setDisplayLine] = useState<Line | null>(null);
   const [displayStation, setDisplayStation] = useState<Station | null>(null);
-  const [history, setHistory] = useState<GachaResult[]>([]);
+  const [shareMessage, setShareMessage] = useState<string | null>(null);
   const lineTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const stationTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  const history = useHistory();
+  const visited = useVisitedStations();
   const excluded = useExcludedLines();
   const activeLines = useMemo(
     () => LINES.filter((line) => !excluded.has(line.code)),
@@ -70,9 +76,32 @@ export default function Gacha() {
         const finalStation = pickRandomStation(line);
         setDisplayStation(finalStation);
         setPhase("done");
-        setHistory((prev) => [{ line, station: finalStation }, ...prev].slice(0, 5));
+        addHistoryEntry(line.code, finalStation.code);
       }
     }, STATION_SPIN_INTERVAL_MS);
+  }
+
+  async function handleShare() {
+    if (!displayLine || !displayStation) return;
+    const text = `🚃駅ガチャで「${displayStation.name}駅」(${displayLine.name})が出ました!`;
+    const url = window.location.href;
+
+    if (navigator.share) {
+      try {
+        await navigator.share({ text, url });
+      } catch {
+        // user cancelled the share sheet; nothing to do
+      }
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(`${text} ${url}`);
+      setShareMessage("リンクをコピーしました");
+    } catch {
+      setShareMessage("コピーに失敗しました");
+    }
+    setTimeout(() => setShareMessage(null), 2000);
   }
 
   return (
@@ -148,34 +177,63 @@ export default function Gacha() {
       </div>
 
       {displayStation && !isSpinning && (
+        <div className="flex w-full gap-2">
+          <button
+            onClick={() => toggleVisited(displayStation.code)}
+            className={`flex h-10 flex-1 items-center justify-center gap-1.5 rounded-full border text-sm font-medium transition-colors ${
+              visited.has(displayStation.code)
+                ? "border-green-500 bg-green-50 text-green-600 dark:border-green-600 dark:bg-green-900/30 dark:text-green-400"
+                : "border-gray-200 bg-white text-gray-500 hover:border-gray-300 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400"
+            }`}
+          >
+            {visited.has(displayStation.code) ? "✓ 訪問済み" : "行ったことある"}
+          </button>
+          <button
+            onClick={handleShare}
+            className="flex h-10 flex-1 items-center justify-center gap-1.5 rounded-full border border-gray-200 bg-white text-sm font-medium text-gray-500 transition-colors hover:border-gray-300 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400"
+          >
+            {shareMessage ?? "結果をシェア"}
+          </button>
+        </div>
+      )}
+
+      {displayStation && !isSpinning && (
         <StationSpots stationCode={displayStation.code} stationName={displayStation.name} />
       )}
 
       {history.length > 0 && (
         <div className="flex w-full flex-col gap-2">
           <span className="text-sm font-medium text-gray-500 dark:text-gray-400">
-            これまでの結果
+            これまでの結果({history.length}件)
           </span>
           <ul className="flex flex-col gap-1">
-            {history.map((item, i) => (
-              <li
-                key={i}
-                className="flex items-center gap-2 rounded-lg bg-white border border-gray-100 px-3 py-2 text-sm dark:bg-gray-900 dark:border-gray-800"
-              >
-                <span
-                  className="rounded px-2 py-0.5 text-xs font-bold text-white"
-                  style={{ backgroundColor: item.line.color }}
+            {history.slice(0, HISTORY_DISPLAY_LIMIT).map((entry) => {
+              const line = LINE_BY_CODE[entry.lineCode];
+              const station = findStation(entry.lineCode, entry.stationCode);
+              if (!line || !station) return null;
+              return (
+                <li
+                  key={entry.id}
+                  className="flex items-center gap-2 rounded-lg bg-white border border-gray-100 px-3 py-2 text-sm dark:bg-gray-900 dark:border-gray-800"
                 >
-                  {item.station.code}
-                </span>
-                <span className="font-medium text-gray-900 dark:text-white">
-                  {item.station.name}駅
-                </span>
-                <span className="text-gray-500 dark:text-gray-400">
-                  {item.line.name}
-                </span>
-              </li>
-            ))}
+                  <span
+                    className="rounded px-2 py-0.5 text-xs font-bold text-white"
+                    style={{ backgroundColor: line.color }}
+                  >
+                    {station.code}
+                  </span>
+                  <span className="font-medium text-gray-900 dark:text-white">
+                    {station.name}駅
+                  </span>
+                  <span className="text-gray-500 dark:text-gray-400">
+                    {line.name}
+                  </span>
+                  {visited.has(station.code) && (
+                    <span className="ml-auto text-xs text-green-500 dark:text-green-400">✓</span>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         </div>
       )}
@@ -183,6 +241,7 @@ export default function Gacha() {
       <span className="text-xs text-gray-400 dark:text-gray-500">
         対象路線数: {activeLines.length} / 対象駅数: {activeStationCount}
         {activeLines.length !== LINES.length && ` (全${LINES.length}路線)`}
+        {" "}/ 訪問済み: {visited.size} / {STATION_COUNT}駅
       </span>
     </div>
   );
